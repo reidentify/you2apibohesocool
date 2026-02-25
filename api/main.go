@@ -96,33 +96,62 @@ type ModelDetail struct {
 	OwnedBy string `json:"owned_by"`
 }
 
-// modelMap 存储 OpenAI 模型名称到 You.com 模型名称的映射。
+// modelMap 存储 OpenAI 风格模型名称到 You.com 模型 ID 的映射。
+// 数据来源: https://you.com/api/get_ai_models
 var modelMap = map[string]string{
-	"deepseek-reasoner":       "deepseek_r1",
-	"deepseek-chat":           "deepseek_v3",
-	"o3-mini-high":            "openai_o3_mini_high",
-	"o3-mini-medium":          "openai_o3_mini_medium",
-	"o1":                      "openai_o1",
-	"o1-mini":                 "openai_o1_mini",
-	"o1-preview":              "openai_o1_preview",
-	"gpt-4o":                  "gpt_4o",
-	"gpt-4o-mini":             "gpt_4o_mini",
-	"gpt-4-turbo":             "gpt_4_turbo",
-	"gpt-3.5-turbo":           "gpt_3.5",
-	"claude-3-opus":           "claude_3_opus",
-	"claude-3-sonnet":         "claude_3_sonnet",
-	"claude-3.5-sonnet":       "claude_3_5_sonnet",
-	"claude-3.5-haiku":        "claude_3_5_haiku",
-	"gemini-1.5-pro":          "gemini_1_5_pro",
-	"gemini-1.5-flash":        "gemini_1_5_flash",
-	"llama-3.2-90b":           "llama3_2_90b",
-	"llama-3.1-405b":          "llama3_1_405b",
-	"mistral-large-2":         "mistral_large_2",
-	"qwen-2.5-72b":            "qwen2p5_72b",
-	"qwen-2.5-coder-32b":      "qwen2p5_coder_32b",
-	"command-r-plus":          "command_r_plus",
-	"claude-3-7-sonnet":       "claude_3_7_sonnet",
-	"claude-3-7-sonnet-think": "claude_3_7_sonnet_thinking",
+	// OpenAI
+	"gpt-5.2-thinking": "gpt_5_2_thinking",
+	"gpt-5.2-instant":  "gpt_5_2_instant",
+	"gpt-5.1-thinking": "gpt_5_1_thinking",
+	"gpt-5.1-instant":  "gpt_5_1_instant",
+	"gpt-5":            "gpt_5",
+	"gpt-5-mini":       "gpt_5_mini",
+	"gpt-4.1":          "gpt_4_1",
+	"gpt-4.1-mini":     "gpt_4_1_mini",
+	"gpt-oss-120b":     "openai_gpt_oss_120b",
+
+	// Anthropic
+	"claude-4.6-opus-thinking":   "claude_4_6_opus_thinking",
+	"claude-4.6-opus":            "claude_4_6_opus",
+	"claude-4.5-opus-thinking":   "claude_4_5_opus_thinking",
+	"claude-4.5-opus":            "claude_4_5_opus",
+	"claude-4.1-opus-thinking":   "claude_4_1_opus_thinking",
+	"claude-4.1-opus":            "claude_4_1_opus",
+	"claude-4.6-sonnet-thinking": "claude_4_6_sonnet_thinking",
+	"claude-4.6-sonnet":          "claude_4_6_sonnet",
+	"claude-4.5-sonnet-thinking": "claude_4_5_sonnet_thinking",
+	"claude-4.5-sonnet":          "claude_4_5_sonnet",
+	"claude-4-sonnet-thinking":   "claude_4_sonnet_thinking",
+	"claude-4-sonnet":            "claude_4_sonnet",
+	"claude-4.5-haiku":           "claude_4_5_haiku",
+
+	// Google
+	"gemini-3.1-pro":  "gemini_3_1_pro",
+	"gemini-3-pro":    "gemini_3_pro",
+	"gemini-3-flash":  "gemini_3_flash",
+	"gemini-2.5-pro":  "gemini_2_5_pro_preview",
+	"gemini-2.5-flash": "gemini_2_5_flash_preview",
+
+	// xAI
+	"grok-4.1-fast-reasoning": "grok_4_1_fast_reasoning",
+	"grok-4.1-fast":           "grok_4_1_fast",
+	"grok-4":                  "grok_4",
+
+	// Alibaba
+	"qwen3-235b": "qwen3_235b",
+
+	// DeepSeek
+	"deepseek-r1":   "deepseek_r1",
+	"deepseek-v3":   "deepseek_v3",
+	"deepseek-reasoner": "deepseek_r1",
+	"deepseek-chat":     "deepseek_v3",
+
+	// Meta
+	"llama-4-maverick": "llama4_maverick",
+	"llama-4-scout":    "llama4_scout",
+
+	// Mistral
+	"mistral-large-2": "mistral_large_2",
 }
 
 // getReverseModelMap 创建并返回 modelMap 的反向映射（You.com 模型名称 -> OpenAI 模型名称）。
@@ -132,6 +161,29 @@ func getReverseModelMap() map[string]string {
 		reverse[v] = k
 	}
 	return reverse
+}
+
+// modelOwnerMap 存储 You.com 模型 ID 前缀到公司名称的映射。
+var modelOwnerMap = map[string]string{
+	"gpt":     "OpenAI",
+	"openai":  "OpenAI",
+	"claude":  "Anthropic",
+	"gemini":  "Google",
+	"grok":    "xAI",
+	"qwen":    "Alibaba",
+	"deepseek": "DeepSeek",
+	"llama":   "Meta",
+	"mistral": "Mistral AI",
+}
+
+// getModelOwner 根据 You.com 模型 ID 推断所属公司。
+func getModelOwner(youModelID string) string {
+	for prefix, owner := range modelOwnerMap {
+		if strings.HasPrefix(youModelID, prefix) {
+			return owner
+		}
+	}
+	return "unknown"
 }
 
 // mapModelName 将 OpenAI 模型名称映射到 You.com 模型名称。
@@ -184,12 +236,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 		models := make([]ModelDetail, 0, len(modelMap))
 		created := time.Now().Unix()
-		for modelID := range modelMap {
+		for modelID, youID := range modelMap {
 			models = append(models, ModelDetail{
 				ID:      modelID,
 				Object:  "model",
 				Created: created,
-				OwnedBy: "organization-owner",
+				OwnedBy: getModelOwner(youID),
 			})
 		}
 
