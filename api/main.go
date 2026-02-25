@@ -294,8 +294,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// 转换 system 消息为 user 消息
 	openAIReq.Messages = convertSystemToUser(openAIReq.Messages)
 
-	// 构建 You.com 聊天历史
-	var chatHistory []map[string]interface{}
+	// 构建 You.com 聊天历史（初始化为空数组，避免 json.Marshal 输出 null）
+	chatHistory := make([]map[string]interface{}, 0)
 	var sources []map[string]interface{}
 	var lastAssistantMessage string
 
@@ -505,10 +505,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 打印响应状态码
 	fmt.Printf("响应状态码: %d\n", resp.StatusCode)
 
-	// 如果状态码不是 200，打印响应内容
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		fmt.Printf("错误响应内容: %s\n", string(body))
@@ -516,13 +514,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 根据 OpenAI 请求的 stream 参数选择处理函数
 	if !openAIReq.Stream {
-		handleNonStreamingResponse(w, youReq) // 处理非流式响应
+		handleNonStreamingResponse(w, resp)
 		return
 	}
 
-	handleStreamingResponse(w, youReq) // 处理流式响应
+	handleStreamingResponse(w, resp)
 }
 
 // getCookies 根据提供的 DS token 生成所需的 Cookie。
@@ -538,18 +535,8 @@ func getCookies(dsToken string) map[string]string {
 	}
 }
 
-// handleNonStreamingResponse 处理非流式请求。
-func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
-	client := &http.Client{
-		Timeout: 60 * time.Second, // 设置超时时间
-	}
-	resp, err := client.Do(youReq)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-
+// handleNonStreamingResponse 处理非流式请求，从已有的响应中读取。
+func handleNonStreamingResponse(w http.ResponseWriter, resp *http.Response) {
 	var fullResponse strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
 
@@ -604,16 +591,8 @@ func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
 	}
 }
 
-// handleStreamingResponse 处理流式请求。
-func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
-	client := &http.Client{} // 流式请求不需要设置超时，因为它会持续接收数据
-	resp, err := client.Do(youReq)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-
+// handleStreamingResponse 处理流式请求，从已有的响应中读取。
+func handleStreamingResponse(w http.ResponseWriter, resp *http.Response) {
 	// 设置流式响应的头部
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
