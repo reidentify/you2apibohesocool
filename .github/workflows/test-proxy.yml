@@ -1,0 +1,144 @@
+name: Test You2API Proxy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build proxy
+        run: go build -o main .
+
+      - name: Start proxy
+        run: |
+          ./main &
+          sleep 2
+          curl -s http://localhost:8080/ | head -c 200
+
+      - name: Setup Python + Playwright
+        run: |
+          pip install playwright requests
+          playwright install --with-deps chromium
+
+      - name: Register You.com & Test
+        run: |
+          python3 << 'SCRIPT'
+          import json, re, time, requests, subprocess
+          from playwright.sync_api import sync_playwright
+
+          DUCKMAIL = "https://api.duckmail.sbs"
+          ts = int(time.time())
+          addr = f"ghtest{ts}@baldur.edu.kg"
+          pwd = "GhPass2026!x"
+
+          # 1. 创建邮箱
+          requests.post(f"{DUCKMAIL}/accounts", json={"address": addr, "password": pwd})
+          tok = requests.post(f"{DUCKMAIL}/token", json={"address": addr, "password": pwd}).json()["token"]
+          print(f"[1] Email: {addr}")
+
+          # 2. Playwright 注册
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+              ctx = browser.new_context(viewport={"width":1280,"height":800})
+              page = ctx.new_page()
+              page.goto("https://you.com/signin", wait_until="domcontentloaded", timeout=60000)
+              page.wait_for_timeout(3000)
+              page.locator('input[type="email"], input[placeholder*="email"]').first.fill(addr)
+              page.wait_for_timeout(500)
+              page.get_by_text("Continue", exact=True).click()
+              page.wait_for_timeout(3000)
+
+              # 获取验证码
+              code = None
+              for _ in range(30):
+                  time.sleep(1)
+                  msgs = requests.get(f"{DUCKMAIL}/messages", headers={"Authorization": f"Bearer {tok}"}).json().get("hydra:member", [])
+                  for m in msgs:
+                      if "you.com" in m["from"]["address"]:
+                          d = requests.get(f"{DUCKMAIL}/messages/{m['id']}", headers={"Authorization": f"Bearer {tok}"}).json()
+                          codes = re.findall(r"\b(\d{6})\b", d.get("text","") or "".join(d.get("html",[])))
+                          if codes: code = codes[0]; break
+                  if code: break
+
+              if not code:
+                  print("ERROR: no code"); browser.close(); exit(1)
+              print(f"[2] Code: {code}")
+
+              inputs = page.locator('input[type="text"], input[type="tel"], input[type="number"]')
+              if inputs.count() >= 6:
+                  for i in range(6):
+                      inputs.nth(i).fill(code[i])
+                      page.wait_for_timeout(80)
+              page.wait_for_timeout(8000)
+
+              ds = next((c["value"] for c in ctx.cookies() if c["name"]=="DS" and "you.com" in c["domain"]), None)
+              browser.close()
+
+          if not ds:
+              print("ERROR: no DS"); exit(1)
+          print(f"[3] DS: {ds[:60]}...")
+
+          # 3. 测试多轮对话
+          time.sleep(5)
+          headers = {"Content-Type": "application/json", "Authorization": f"Bearer {ds}"}
+
+          print("\n=== Test 1: 单轮 ===")
+          r = requests.post("http://localhost:8080/v1/chat/completions", headers=headers,
+              json={"model":"deepseek-v3","messages":[{"role":"user","content":"Say hi in one word"}],"stream":False})
+          c1 = r.json()["choices"][0]["message"]["content"]
+          blocked = "blocked" in c1.lower()
+          print(f"Response: {c1[:200]}")
+          print(f"Blocked: {blocked}")
+
+          if blocked:
+              print("Account blocked, skipping further tests")
+              exit(1)
+
+          time.sleep(3)
+          print("\n=== Test 2: 多轮上下文 ===")
+          r = requests.post("http://localhost:8080/v1/chat/completions", headers=headers,
+              json={"model":"deepseek-v3","messages":[
+                  {"role":"user","content":"My name is Alice."},
+                  {"role":"assistant","content":"Nice to meet you, Alice!"},
+                  {"role":"user","content":"What is my name?"}
+              ],"stream":False})
+          c2 = r.json()["choices"][0]["message"]["content"]
+          print(f"Response: {c2[:200]}")
+
+          time.sleep(3)
+          print("\n=== Test 3: 流式 ===")
+          r = requests.post("http://localhost:8080/v1/chat/completions", headers=headers,
+              json={"model":"deepseek-v3","messages":[{"role":"user","content":"Count 1 to 5"}],"stream":True}, stream=True)
+          chunks = []
+          for line in r.iter_lines():
+              if line and line.startswith(b"data: "):
+                  try:
+                      d = json.loads(line[6:])
+                      t = d["choices"][0]["delta"]["content"]
+                      chunks.append(t)
+                  except: pass
+          full = "".join(chunks)
+          print(f"Streamed: {full[:200]}")
+
+          time.sleep(3)
+          print("\n=== Test 4: Claude 4.6 Sonnet ===")
+          r = requests.post("http://localhost:8080/v1/chat/completions", headers=headers,
+              json={"model":"claude-4.6-sonnet","messages":[
+                  {"role":"user","content":"Who are you? What model are you? Be specific about version."}
+              ],"stream":False})
+          c4 = r.json()["choices"][0]["message"]["content"]
+          print(f"Response: {c4[:500]}")
+          is_claude = "claude" in c4.lower()
+          is_express = "Express Agent" in c4
+          print(f"Is Claude: {is_claude} | Express fallback: {is_express}")
+
+          print("\n=== DONE ===")
+          SCRIPT
