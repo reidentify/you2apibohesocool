@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>俄罗斯方块风格电池充电器</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            flex-direction: column;
+        }
+
+        .battery-container {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+            text-align: center;
+        }
+
+        .battery-title {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+        }
+
+        .battery-grid {
+            display: grid;
+            grid-template-columns: repeat(10, 25px);
+            grid-template-rows: repeat(20, 25px);
+            gap: 2px;
+            background: #000;
+            padding: 10px;
+            border: 3px solid #444;
+            border-radius: 10px;
+            margin: 20px auto;
+            position: relative;
+        }
+
+        .battery-cell {
+            width: 25px;
+            height: 25px;
+            background: #111;
+            border: 1px solid #333;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .battery-cell.filled {
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 0 5px currentColor;
+        }
+
+        .battery-cell.filled::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            right: 2px;
+            bottom: 2px;
+            background: currentColor;
+            opacity: 0.8;
+        }
+
+        .battery-info {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+            font-size: 18px;
+        }
+
+        .charge-level {
+            color: #00ff00;
+            font-weight: bold;
+            text-shadow: 0 0 5px #00ff00;
+        }
+
+        .controls {
+            margin-top: 20px;
+        }
+
+        .btn {
+            background: #333;
+            color: #fff;
+            border: 2px solid #555;
+            padding: 10px 20px;
+            margin: 0 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            font-family: inherit;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            background: #555;
+            border-color: #777;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+        }
+
+        .btn:active {
+            transform: translateY(1px);
+        }
+
+        .charging-indicator {
+            font-size: 14px;
+            color: #ffff00;
+            margin-top: 10px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .charging-indicator.active {
+            opacity: 1;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .tetris-piece {
+            position: absolute;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+
+        .tetris-block {
+            width: 25px;
+            height: 25px;
+            display: inline-block;
+            margin: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div class="battery-container">
+        <h1 class="battery-title">🔋 俄罗斯方块电池充电器</h1>
+        
+        <div class="battery-info">
+            <span>电量: <span class="charge-level" id="chargeLevel">0%</span></span>
+            <span>状态: <span id="status">待机</span></span>
+        </div>
+
+        <div class="battery-grid" id="batteryGrid"></div>
+
+        <div class="charging-indicator" id="chargingIndicator">
+            ⚡ 充电中... 方块正在下落
+        </div>
+
+        <div class="controls">
+            <button class="btn" onclick="startCharging()">开始充电</button>
+            <button class="btn" onclick="stopCharging()">停止充电</button>
+            <button class="btn" onclick="resetBattery()">重置电池</button>
+        </div>
+    </div>
+
+    <script>
+        const GRID_WIDTH = 10;
+        const GRID_HEIGHT = 20;
+        let grid = [];
+        let isCharging = false;
+        let chargeLevel = 0;
+        let chargingInterval;
+        let currentPiece = null;
+        let piecePosition = { x: 0, y: 0 };
+
+        // 俄罗斯方块形状定义
+        const tetrisPieces = [
+            [[1, 1, 1, 1]], // I型
+            [[1, 1], [1, 1]], // O型
+            [[0, 1, 0], [1, 1, 1]], // T型
+            [[0, 1, 1], [1, 1, 0]], // S型
+            [[1, 1, 0], [0, 1, 1]], // Z型
+            [[1, 0, 0], [1, 1, 1]], // J型
+            [[0, 0, 1], [1, 1, 1]]  // L型
+        ];
+
+        // 初始化网格
+        function initGrid() {
+            const gridElement = document.getElementById('batteryGrid');
+            gridElement.innerHTML = '';
+            grid = [];
+
+            for (let row = 0; row < GRID_HEIGHT; row++) {
+                grid[row] = [];
+                for (let col = 0; col < GRID_WIDTH; col++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'battery-cell';
+                    cell.id = `cell-${row}-${col}`;
+                    gridElement.appendChild(cell);
+                    grid[row][col] = 0;
+                }
+            }
+        }
+
+        // 获取充电颜色（红色到绿色渐变）
+        function getChargeColor(level) {
+            const red = Math.max(0, 255 - (level * 2.55));
+            const green = Math.min(255, level * 2.55);
+            return `rgb(${Math.round(red)}, ${Math.round(green)}, 0)`;
+        }
+
+        // 生成随机俄罗斯方块
+        function generatePiece() {
+            const pieceIndex = Math.floor(Math.random() * tetrisPieces.length);
+            return tetrisPieces[pieceIndex];
+        }
+
+        // 检查方块是否可以放置
+        function canPlacePiece(piece, x, y) {
+            for (let row = 0; row < piece.length; row++) {
+                for (let col = 0; col < piece[row].length; col++) {
+                    if (piece[row][col]) {
+                        const newX = x + col;
+                        const newY = y + row;
+                        if (newX < 0 || newX >= GRID_WIDTH || newY >= GRID_HEIGHT || grid[newY][newX]) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        // 放置方块到网格
+        function placePiece(piece, x, y) {
+            for (let row = 0; row < piece.length; row++) {
+                for (let col = 0; col < piece[row].length; col++) {
+                    if (piece[row][col]) {
+                        const newX = x + col;
+                        const newY = y + row;
+                        if (newY >= 0 && newY < GRID_HEIGHT && newX >= 0 && newX < GRID_WIDTH) {
+                            grid[newY][newX] = 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 清除完整行
+        function clearFullRows() {
+            for (let row = GRID_HEIGHT - 1; row >= 0; row--) {
+                if (grid[row].every(cell => cell === 1)) {
+                    // 移除完整行
+                    grid.splice(row, 1);
+                    // 在顶部添加新的空行
+                    grid.unshift(new Array(GRID_WIDTH).fill(0));
+                    row++; // 重新检查当前行
+                }
+            }
+        }
+
+        // 更新显示
+        function updateDisplay() {
+            const filledCells = grid.flat().filter(cell => cell === 1).length;
+            chargeLevel = Math.round((filledCells / (GRID_WIDTH * GRID_HEIGHT)) * 100);
+            
+            document.getElementById('chargeLevel').textContent = `${chargeLevel}%`;
+            
+            for (let row = 0; row < GRID_HEIGHT; row++) {
+                for (let col = 0; col < GRID_WIDTH; col++) {
+                    const cell = document.getElementById(`cell-${row}-${col}`);
+                    if (grid[row][col]) {
+                        cell.classList.add('filled');
+                        // 根据行位置计算渐变色
+                        const rowProgress = ((GRID_HEIGHT - row) / GRID_HEIGHT) * 100;
+                        cell.style.color = getChargeColor(rowProgress);
+                    } else {
+                        cell.classList.remove('filled');
+                        cell.style.color = '';
+                    }
+                }
+            }
+        }
+
+        // 充电动画
+        function chargingStep() {
+            if (!isCharging) return;
+
+            // 生成新方块
+            if (!currentPiece) {
+                currentPiece = generatePiece();
+                piecePosition = { x: Math.floor(GRID_WIDTH / 2) - 1, y: 0 };
+                
+                // 检查游戏是否结束（顶部被占满）
+                if (!canPlacePiece(currentPiece, piecePosition.x, piecePosition.y)) {
+                    stopCharging();
+                    document.getElementById('status').textContent = '电池已满';
+                    return;
+                }
+            }
+
+            // 尝试向下移动方块
+            if (canPlacePiece(currentPiece, piecePosition.x, piecePosition.y + 1)) {
+                piecePosition.y++;
+            } else {
+                // 方块无法继续下降，放置到网格中
+                placePiece(currentPiece, piecePosition.x, piecePosition.y);
+                currentPiece = null;
+                
+                // 清除完整行
+                clearFullRows();
+            }
+
+            updateDisplay();
+        }
+
+        // 开始充电
+        function startCharging() {
+            if (isCharging) return;
+            
+            isCharging = true;
+            document.getElementById('status').textContent = '充电中';
+            document.getElementById('chargingIndicator').classList.add('active');
+            
+            chargingInterval = setInterval(chargingStep, 500);
+        }
+
+        // 停止充电
+        function stopCharging() {
+            isCharging = false;
+            document.getElementById('status').textContent = '待机';
+            document.getElementById('chargingIndicator').classList.remove('active');
+            
+            if (chargingInterval) {
+                clearInterval(chargingInterval);
+                chargingInterval = null;
+            }
+            currentPiece = null;
+        }
+
+        // 重置电池
+        function resetBattery() {
+            stopCharging();
+            chargeLevel = 0;
+            initGrid();
+            updateDisplay();
+            document.getElementById('status').textContent = '待机';
+        }
+
+        // 初始化
+        initGrid();
+        updateDisplay();
+    </script>
+</body>
+</html>
